@@ -54,10 +54,44 @@ Conversion runs in two stages:
 | `--scene NAME` | Import a specific named SketchUp scene (applies layer visibility and camera) |
 | `--max-instance N` | Instancing threshold — components appearing N+ times are deduplicated (default: 1) |
 | `--clip-end F` | Camera far clip plane in meters (default: 250.0) |
+| `--preview` | Render a 1920×1080 PNG preview image next to the output `.blend` |
 | `--also-obj` | Also produce a `.obj` file alongside the `.blend` |
 | `--obj-only` | Only produce `.obj` output, skip Blender |
 | `--keep-work-dir` | Retain the intermediate work directory after conversion |
 | `--work-dir PATH` | Use a specific work directory instead of a temporary one |
+
+## Using the GHCR image
+
+Pre-built images are published to GHCR by CI on every push to the `skp2blend` branch:
+
+```bash
+docker run --rm \
+    -v "$(pwd):/data" \
+    ghcr.io/recraft-ou/sketchup_importer/skp2blend:latest \
+    /data/model.skp /data/model.blend --preview
+```
+
+### GPU-accelerated rendering
+
+Pass your GPU to the container for faster EEVEE preview renders. Without a GPU, Blender falls back to software rendering (works but slower).
+
+**NVIDIA** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
+
+```bash
+docker run --rm --gpus all \
+    -v "$(pwd):/data" \
+    ghcr.io/recraft-ou/sketchup_importer/skp2blend:latest \
+    /data/model.skp /data/model.blend --preview
+```
+
+**AMD / Intel** (Mesa/RADV — pass the DRI render nodes):
+
+```bash
+docker run --rm --device /dev/dri \
+    -v "$(pwd):/data" \
+    ghcr.io/recraft-ou/sketchup_importer/skp2blend:latest \
+    /data/model.skp /data/model.blend --preview
+```
 
 ## Building the Docker image
 

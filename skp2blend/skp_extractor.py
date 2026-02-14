@@ -213,7 +213,7 @@ def _inherent(mat_name, default_material):
     return mat_name
 
 
-def extract_entity_tree(entities, skp_components, material_scales, layers_skip=None):
+def extract_entity_tree(entities, skp_components, material_scales):
     """Build the root EntityNode tree from the model's top-level entities."""
 
     def walk(entities, name, default_material, node_type):
@@ -223,8 +223,6 @@ def extract_entity_tree(entities, skp_components, material_scales, layers_skip=N
 
         for group in entities.groups:
             if group.hidden:
-                continue
-            if layers_skip and group.layer and group.layer in layers_skip:
                 continue
             gmat = _inherent(_mat_name_from_obj(group), default_material)
             child = walk(
@@ -241,8 +239,6 @@ def extract_entity_tree(entities, skp_components, material_scales, layers_skip=N
 
         for instance in entities.instances:
             if instance.hidden:
-                continue
-            if layers_skip and instance.layer and instance.layer in layers_skip:
                 continue
             imat = _inherent(_mat_name_from_obj(instance), default_material)
             cdef = skp_components.get(instance.definition.name)
@@ -312,21 +308,17 @@ def extract_scenes(model):
 # Component-depth analysis (ports SKP_util.component_deps on live SDK objects)
 # ---------------------------------------------------------------------------
 
-def _live_component_deps(entities, comp=True, layers_skip=None):
+def _live_component_deps(entities, comp=True):
     own_depth = 1 if comp else 0
     group_depth = 0
     for group in entities.groups:
-        if layers_skip and group.layer and group.layer in layers_skip:
-            continue
-        group_depth = max(group_depth, _live_component_deps(group.entities, comp=False, layers_skip=layers_skip))
+        group_depth = max(group_depth, _live_component_deps(group.entities, comp=False))
 
     instance_depth = 0
     for instance in entities.instances:
-        if layers_skip and instance.layer and instance.layer in layers_skip:
-            continue
         instance_depth = max(
             instance_depth,
-            1 + _live_component_deps(instance.definition.entities, layers_skip=layers_skip),
+            1 + _live_component_deps(instance.definition.entities),
         )
 
     return max(own_depth, group_depth, instance_depth)

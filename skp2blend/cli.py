@@ -43,6 +43,7 @@ def main():
     parser.add_argument("--clip-end", type=float, default=250.0, help="Camera far clip plane in meters")
     parser.add_argument("--keep-work-dir", action="store_true", help="Don't delete the intermediate work directory")
     parser.add_argument("--work-dir", type=str, default="", help="Use a specific work directory instead of a temp one")
+    parser.add_argument("--preview", action="store_true", help="Render a PNG preview image next to the output .blend")
     parser.add_argument("--also-obj", action="store_true", help="Also produce a Wavefront OBJ alongside the .blend")
     parser.add_argument("--obj-only", action="store_true", help="Only produce OBJ output (skip Blender Stage 2)")
     parser.add_argument(
@@ -154,6 +155,28 @@ def main():
                 sys.exit(3)
 
             print(f"\nSuccess: {output_blend} ({os.path.getsize(output_blend)} bytes)")
+
+        # =============================================================
+        # Preview render
+        # =============================================================
+        if args.preview and not args.obj_only:
+            preview_path = os.path.splitext(output_blend)[0] + ".png"
+            print(f"\n=== Rendering preview to {preview_path} ===")
+
+            render_script = os.path.join(_THIS_DIR, "render_preview.py")
+            preview_cmd = [
+                args.blender, "--background", output_blend,
+                "--python", render_script,
+                "--", preview_path,
+            ]
+
+            print(f"Running: {' '.join(preview_cmd)}")
+            result = subprocess.run(preview_cmd)
+
+            if result.returncode != 0:
+                print("Warning: preview render failed", file=sys.stderr)
+            elif os.path.isfile(preview_path):
+                print(f"Preview: {preview_path} ({os.path.getsize(preview_path)} bytes)")
 
         # =============================================================
         # Stage 2b — Build OBJ (pure Python, no Blender needed)

@@ -60,7 +60,8 @@ RUN wget -qO /tmp/blender.tar.xz "${BLENDER_URL}" && \
     ln -s /opt/blender/blender /usr/local/bin/blender
 
 # ── Converter scripts ──────────────────────────────────────────────────
-COPY intermediate.py skputil.py skp_extractor.py blend_builder.py obj_builder.py cli.py \
+COPY intermediate.py skputil.py skp_extractor.py blend_builder.py obj_builder.py \
+     render_preview.py cli.py \
      /opt/skp2blend/
 
 # Also copy the Python modules into the Wine Python directory so the

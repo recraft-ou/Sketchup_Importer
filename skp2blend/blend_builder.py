@@ -43,6 +43,30 @@ def skp_log(*args):
 
 
 # ---------------------------------------------------------------------------
+# Hidden-tag collection management
+# ---------------------------------------------------------------------------
+
+_hidden_tag_collections = {}  # layer_name -> bpy.types.Collection
+
+
+def get_hidden_tag_collection(layer_name):
+    """Return (or create) a collection for entities on a hidden tag/layer.
+
+    Collections are named ``"Hidden Tag: <layer_name>"`` and linked under
+    the scene's root collection.  They will be excluded from the view layer
+    after the hierarchy is built (see ``main()``).
+    """
+    if layer_name in _hidden_tag_collections:
+        return _hidden_tag_collections[layer_name]
+
+    coll_name = f"Hidden Tag: {layer_name}"
+    coll = bpy.data.collections.new(coll_name)
+    bpy.context.scene.collection.children.link(coll)
+    _hidden_tag_collections[layer_name] = coll
+    return coll
+
+
+# ---------------------------------------------------------------------------
 # Materials
 # ---------------------------------------------------------------------------
 
@@ -215,7 +239,7 @@ def _inherent_mat(node_mat, parent_default):
     return inherent_default_mat(node_mat, parent_default)
 
 
-def analyze_entities(node, parent_transform, default_material, etype, component_stats, component_skip, layers_skip):
+def analyze_entities(node, parent_transform, default_material, etype, component_stats, component_skip):
     """Walk the entity tree and count component instances (mirrors SceneImporter.analyze_entities)."""
     if etype == EntityType.component:
         name = node.get("definition_name", node["name"])
@@ -225,8 +249,6 @@ def analyze_entities(node, parent_transform, default_material, etype, component_
         child_type = child["type"]
         if child.get("hidden"):
             continue
-        if layers_skip and child.get("layer_name") in layers_skip:
-            continue
         child_mat = _inherent_mat(child.get("material_name"), default_material)
         child_transform = parent_transform
         if child.get("transform"):
@@ -235,13 +257,13 @@ def analyze_entities(node, parent_transform, default_material, etype, component_
 
         if child_type == "group":
             analyze_entities(child, child_transform, child_mat, EntityType.group,
-                             component_stats, component_skip, layers_skip)
+                             component_stats, component_skip)
         elif child_type == "component_instance":
             cname = child.get("definition_name", child["name"])
             if (cname, child_mat) in component_skip:
                 continue
             analyze_entities(child, child_transform, child_mat, EntityType.component,
-                             component_stats, component_skip, layers_skip)
+                             component_stats, component_skip)
 
     return component_stats
 
@@ -258,7 +280,6 @@ def write_duplicateable_groups(
     component_skip,
     group_written,
     component_meshes,
-    layers_skip,
 ):
     """Create Blender collections for high-frequency components."""
     component_stats = analyze_entities(
@@ -268,7 +289,6 @@ def write_duplicateable_groups(
         EntityType.none,
         defaultdict(list),
         component_skip,
-        layers_skip,
     )
     component_stats = {k: v for k, v in component_stats.items() if len(v) >= max_instance}
 
@@ -291,7 +311,7 @@ def write_duplicateable_groups(
                     skp_log(f"Component {gname} written as group")
                     _build_group_from_tree(
                         entity_tree, name, mat, group,
-                        materials, component_skip, group_written, component_meshes, layers_skip,
+                        materials, component_skip, group_written, component_meshes,
                     )
                     component_skip[(name, mat)] = True
                     group_written[(name, mat)] = group
@@ -310,7 +330,7 @@ def _find_definition_node(tree, def_name):
 
 def _build_group_from_tree(
     entity_tree, comp_name, default_material, group,
-    materials, component_skip, group_written, component_meshes, layers_skip,
+    materials, component_skip, group_written, component_meshes,
 ):
     """Build collection objects for a component definition (ports component_def_as_group)."""
     node = _find_definition_node(entity_tree, comp_name)
@@ -335,8 +355,6 @@ def _build_group_from_tree(
 
     for child in node.get("children", []):
         if child.get("hidden"):
-            continue
-        if layers_skip and child.get("layer_name") in layers_skip:
             continue
         child_type = child["type"]
         child_mat = _inherent_mat(child.get("material_name"), default_material)
@@ -420,8 +438,14 @@ def write_entities(
     group_written,
     component_meshes,
     layers_skip,
+    target_collection=None,
 ):
-    """Recursively build Blender objects from the entity tree."""
+    """Recursively build Blender objects from the entity tree.
+
+    *target_collection* overrides ``bpy.context.collection`` for linking
+    objects.  Used to place hidden-tag entities into their own collection.
+    """
+    coll = target_collection or bpy.context.collection
     name = node["name"]
 
     # Deduplicated component — record transform only
@@ -460,7 +484,7 @@ def write_entities(
             me.update(calc_edges=True)
             ob_mesh.parent = ob
             ob_mesh.location = Vector((0, 0, 0))
-            bpy.context.collection.objects.link(ob_mesh)
+            coll.objects.link(ob_mesh)
 
     loc = ob.location
     nested_location = Vector((loc[0], loc[1], loc[2]))
@@ -474,17 +498,22 @@ def write_entities(
         ob.rotation_quaternion = Vector((1, 0, 0, 0))
         ob.scale = Vector((1, 1, 1))
 
-    bpy.context.collection.objects.link(ob)
+    coll.objects.link(ob)
     ob.hide_set(hide_empty)
 
     for child in children:
         if child.get("hidden"):
             continue
-        if layers_skip and child.get("layer_name") in layers_skip:
-            continue
 
         child_type = child["type"]
         child_mat = _inherent_mat(child.get("material_name"), default_material)
+
+        # If the child is on a skipped layer, redirect it (and its subtree)
+        # into a per-tag hidden collection instead of skipping it entirely.
+        child_coll = target_collection
+        child_layer = child.get("layer_name")
+        if layers_skip and child_layer in layers_skip:
+            child_coll = get_hidden_tag_collection(child_layer)
 
         child_transform = parent_transform
         if child.get("transform"):
@@ -502,6 +531,7 @@ def write_entities(
                 ob, nested_location,
                 materials, component_skip, component_stats,
                 group_written, component_meshes, layers_skip,
+                target_collection=child_coll,
             )
         elif child_type == "component_instance":
             write_entities(
@@ -509,6 +539,7 @@ def write_entities(
                 ob, nested_location,
                 materials, component_skip, component_stats,
                 group_written, component_meshes, layers_skip,
+                target_collection=child_coll,
             )
 
 
@@ -761,6 +792,12 @@ def main():
     else:
         bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"
 
+    # Remove default objects (Cube, Camera, Light) that Blender creates
+    for obj_name in ("Cube", "Camera", "Light"):
+        ob = bpy.data.objects.get(obj_name)
+        if ob is not None:
+            bpy.data.objects.remove(ob, do_unlink=True)
+
     # --- Materials ---
     skp_log("Creating materials...")
     materials, materials_scales = write_materials(data["materials"], args.work_dir)
@@ -810,7 +847,7 @@ def main():
 
     write_duplicateable_groups(
         entity_tree, comp_depth_map, args.max_instance,
-        materials, component_skip, group_written, component_meshes, layers_skip,
+        materials, component_skip, group_written, component_meshes,
     )
 
     # Hide the component collections
@@ -839,6 +876,14 @@ def main():
     for k in component_stats:
         name, mat = k
         instance_group_dupli_vert(name, mat, component_stats, group_written, component_meshes)
+
+    # --- Exclude hidden-tag collections from view layer ---
+    if _hidden_tag_collections:
+        vl_root = bpy.context.view_layer.layer_collection
+        for child_lc in vl_root.children:
+            if child_lc.name.startswith("Hidden Tag: "):
+                child_lc.exclude = True
+        skp_log(f"Excluded {len(_hidden_tag_collections)} hidden-tag collection(s) from view layer")
 
     # --- Post-processing ---
     skp_log("Post-processing...")
