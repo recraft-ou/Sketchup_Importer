@@ -109,25 +109,15 @@ def write_mtl(material_records, textures_src_dir, mtl_path, output_dir):
 # OBJ writer
 # ---------------------------------------------------------------------------
 
-def write_obj(data, obj_path, mtl_filename, scene_name=""):
+def write_obj(data, obj_path, mtl_filename):
     """Write a Wavefront .obj file from intermediate data.
 
     Flattens the entity tree, baking transforms into world-space vertex
-    positions.  Each mesh leaf becomes a named ``o`` block.
+    positions.  Each mesh leaf becomes a named ``o`` block.  All geometry
+    is included regardless of tag/layer visibility — OBJ has no concept
+    of collection exclusion.
     """
-    layers_skip = set()
-    if scene_name:
-        for sc in data.get("scenes", []):
-            if sc["name"] == scene_name:
-                layers_skip = set(sc.get("hidden_layer_names", []))
-                print(f"OBJ | Scene '{scene_name}': hiding {len(layers_skip)} layer(s)")
-                break
-
     entity_tree = data["entity_tree"]
-
-    # Build a material-name -> index-in-face_materials lookup per mesh.
-    # For the OBJ we just need material names, not slot indices.
-    # We'll collect all geometry first, then write.
 
     # Collected geometry: list of dicts with keys:
     #   name, vertices (world-space), triangles, uvs, tri_mat_names
@@ -138,7 +128,6 @@ def write_obj(data, obj_path, mtl_filename, scene_name=""):
         _IDENTITY,
         DEFAULT_MATERIAL_NAME,
         meshes,
-        layers_skip,
     )
 
     # Write OBJ
@@ -207,12 +196,9 @@ def write_obj(data, obj_path, mtl_filename, scene_name=""):
     print(f"OBJ | Wrote {len(meshes)} object(s), {v_offset - 1} vertices total")
 
 
-def _walk_entities(node, parent_mat, default_material, meshes, layers_skip):
+def _walk_entities(node, parent_mat, default_material, meshes):
     """Recursively walk the entity tree, collecting flattened mesh data."""
-    # Skip this node entirely if it is hidden or on a hidden layer
     if node.get("hidden"):
-        return
-    if layers_skip and node.get("layer_name") in layers_skip:
         return
 
     # Compute this node's world transform
@@ -230,7 +216,7 @@ def _walk_entities(node, parent_mat, default_material, meshes, layers_skip):
     # Recurse into children
     for child in node.get("children", []):
         child_mat = inherent_default_mat(child.get("material_name"), default_material)
-        _walk_entities(child, world_mat, child_mat, meshes, layers_skip)
+        _walk_entities(child, world_mat, child_mat, meshes)
 
 
 def _emit_mesh(name, mesh_data, world_mat, default_material, meshes):
@@ -292,7 +278,7 @@ def main():
 
     # Write geometry
     print(f"OBJ | Writing geometry to {obj_path}")
-    write_obj(data, obj_path, mtl_filename, scene_name=args.scene)
+    write_obj(data, obj_path, mtl_filename)
 
     print(f"OBJ | Done: {obj_path}")
 

@@ -9,7 +9,8 @@
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <input.skp> [output.blend] [--also-obj] [--obj-only]" >&2
+    echo "Usage: $0 <input.skp> [output.blend] [flags...]" >&2
+    echo "Flags are passed through to skp2blend (e.g. --preview, --scene NAME, --also-obj)" >&2
     exit 1
 fi
 
@@ -28,8 +29,15 @@ EXTRA_FLAGS=()
 shift
 while [ $# -gt 0 ]; do
     case "$1" in
-        --also-obj|--obj-only)
+        --*)
             EXTRA_FLAGS+=("$1")
+            # Consume the next arg too if this flag takes a value
+            case "$1" in
+                --scene|--max-instance|--clip-end|--work-dir)
+                    shift
+                    EXTRA_FLAGS+=("$1")
+                    ;;
+            esac
             ;;
         *)
             OUTPUT="$1"

@@ -425,6 +425,36 @@ def _instance_object_or_group(name, default_material, group_written, component_m
 # Entity hierarchy (ports write_entities)
 # ---------------------------------------------------------------------------
 
+def _node_has_geometry(node, layers_skip):
+    """Check whether a node or any of its descendants contain mesh data."""
+    mesh = node.get("mesh")
+    if mesh and mesh.get("vertices"):
+        return True
+    for child in node.get("children", []):
+        if child.get("hidden"):
+            continue
+        child_layer = child.get("layer_name")
+        if layers_skip and child_layer in layers_skip:
+            continue
+        if _node_has_geometry(child, layers_skip):
+            return True
+    return False
+
+
+def _count_visible_children(node, layers_skip):
+    """Count visible (non-hidden, non-skipped) children of a node."""
+    count = 0
+    for child in node.get("children", []):
+        if child.get("hidden"):
+            continue
+        child_layer = child.get("layer_name")
+        if layers_skip and child_layer in layers_skip:
+            count += 1  # still counts — will go into hidden-tag collection
+            continue
+        count += 1
+    return count
+
+
 def write_entities(
     node,
     parent_transform,
@@ -439,6 +469,7 @@ def write_entities(
     component_meshes,
     layers_skip,
     target_collection=None,
+    depth=0,
 ):
     """Recursively build Blender objects from the entity tree.
 
@@ -465,11 +496,26 @@ def write_entities(
         me, alpha = build_mesh(node.get("mesh"), name, materials)
         component_meshes[mesh_key] = (me, alpha)
 
-    children = node.get("children", [])
-    nested_count = len(children)
+    visible_children = _count_visible_children(node, layers_skip)
+
+    # Skip empty groups that have no geometry anywhere in their subtree
+    if not me and visible_children == 0:
+        return
+    if not me and etype == EntityType.group and not _node_has_geometry(node, layers_skip):
+        return
+
+    # Create a sub-collection for top-level groups to spread objects across
+    # multiple collections and reduce depsgraph churn.
+    sub_collection = None
+    if depth == 1 and visible_children > 0 and name != "_(Loose Entity)":
+        sub_collection = bpy.data.collections.new(name)
+        coll.children.link(sub_collection)
+
+    link_coll = sub_collection or coll
+
     hide_empty = False
 
-    if nested_count == 0 or name == "_(Loose Entity)":
+    if visible_children == 0 or name == "_(Loose Entity)":
         ob = bpy.data.objects.new(name, me)
         ob.matrix_world = Matrix(parent_transform)
         if me:
@@ -484,7 +530,7 @@ def write_entities(
             me.update(calc_edges=True)
             ob_mesh.parent = ob
             ob_mesh.location = Vector((0, 0, 0))
-            coll.objects.link(ob_mesh)
+            link_coll.objects.link(ob_mesh)
 
     loc = ob.location
     nested_location = Vector((loc[0], loc[1], loc[2]))
@@ -493,15 +539,15 @@ def write_entities(
         ob.parent = parent_obj
         ob.location -= parent_location
 
-    if nested_count > 0:
+    if visible_children > 0:
         ob.rotation_mode = "QUATERNION"
         ob.rotation_quaternion = Vector((1, 0, 0, 0))
         ob.scale = Vector((1, 1, 1))
 
-    coll.objects.link(ob)
+    link_coll.objects.link(ob)
     ob.hide_set(hide_empty)
 
-    for child in children:
+    for child in node.get("children", []):
         if child.get("hidden"):
             continue
 
@@ -510,7 +556,7 @@ def write_entities(
 
         # If the child is on a skipped layer, redirect it (and its subtree)
         # into a per-tag hidden collection instead of skipping it entirely.
-        child_coll = target_collection
+        child_coll = sub_collection or target_collection
         child_layer = child.get("layer_name")
         if layers_skip and child_layer in layers_skip:
             child_coll = get_hidden_tag_collection(child_layer)
@@ -532,6 +578,7 @@ def write_entities(
                 materials, component_skip, component_stats,
                 group_written, component_meshes, layers_skip,
                 target_collection=child_coll,
+                depth=depth + 1,
             )
         elif child_type == "component_instance":
             write_entities(
@@ -540,6 +587,7 @@ def write_entities(
                 materials, component_skip, component_stats,
                 group_written, component_meshes, layers_skip,
                 target_collection=child_coll,
+                depth=depth + 1,
             )
 
 
@@ -893,6 +941,16 @@ def main():
     # Purge orphan data blocks (unused materials/images) to reduce file size
     bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=False, do_recursive=True)
     skp_log("Purged orphan data blocks")
+
+    # Force all 3D viewports to SOLID shading to prevent EEVEE shader
+    # compilation from freezing the GUI on first open.
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type == "VIEW_3D":
+                for space in area.spaces:
+                    if space.type == "VIEW_3D":
+                        space.shading.type = "SOLID"
+                        space.shading.color_type = "MATERIAL"
 
     # --- Save ---
     skp_log(f"Saving {args.output_blend}")
