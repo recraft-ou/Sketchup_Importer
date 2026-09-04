@@ -489,7 +489,17 @@ def write_entities(
             return
 
     # Build mesh
-    mesh_key = (name, default_material)
+    # Anonymous SketchUp groups (raw name "G-") all get renamed to the same
+    # generic "G-G-" by the caller before reaching here -- caching by name
+    # alone makes unrelated anonymous groups collide in component_meshes,
+    # silently reusing (or losing) each other's geometry. Component
+    # instances legitimately share cache by their real definition-derived
+    # name; only groups need a guaranteed-unique key (id(node) is unique
+    # per node dict instance and never collides).
+    if etype == EntityType.component:
+        mesh_key = (name, default_material)
+    else:
+        mesh_key = (id(node), default_material)
     if mesh_key in component_meshes:
         me, alpha = component_meshes[mesh_key]
     else:
